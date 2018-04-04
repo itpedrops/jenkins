@@ -1,0 +1,139 @@
+//////////////////////////////////////////////////////////////////////
+// JOB android-nova-release
+//////////////////////////////////////////////////////////////////////
+
+node('xxxx'){
+    def GIT_BRANCH = "${BRANCH}"
+    def MSG_ERROR = ""
+    def MSG_SUCCESS = ""
+    
+    stage('Checkout'){
+        try{
+            checkout changelog: false, 
+                poll: false, 
+                scm: [
+                    $class: 'GitSCM', 
+                    branches: [[name: "${GIT_BRANCH}" ]],
+                    doGenerateSubmoduleConfigurations: false, 
+                    extensions: [
+                        [$class: 'CheckoutOption', 
+                            timeout: 1200]
+                                ], 
+                    submoduleCfg: [], 
+                    userRemoteConfigs: [
+                            [credentialsId: 'MY-CREDENTIALS', 
+                            url: 'git@github.com:myteam/myrepo.git']
+                    ]]
+        }catch(ex){
+            MSG_ERROR = MSG_ERROR + " Checkout Failed "
+            error "Checkout Failed"
+        }
+    }
+
+    stage ('Versioning IN'){
+        sh 'aws s3 cp s3://bucket/version.properties ./app/'
+        sh 'aws s3 cp s3://bucket-artfacts-example-node/key.p12 ./app/'
+    }
+
+    stage ('Quality Check'){
+
+        //////
+        try {
+            sh './gradlew incrementBuildNumber'
+
+            if ( BRANCH.startsWith("hotfix/")  ) {
+                sh './gradlew incrementPatchNumber'
+            } else if (BRANCH.startsWith("release/")) {
+                sh './gradlew incrementMinorNumber'
+            } else {  
+            }
+        } catch(ex){
+            MSG_ERROR = MSG_ERROR + " Increment Build / Patch Number Failed \n "
+        }
+
+        //////
+        try {
+            sh './gradlew qualityReport'
+        } catch(ex) {
+             MSG_ERROR = MSG_ERROR + "qualityReport Failed \n"
+        }
+
+        //////
+        try {
+            publishHTML([
+             allowMissing: false,
+             alwaysLinkToLastBuild: true,
+             keepAll: true,
+             reportTitles:'Jacoco',
+             reportDir: 'app/build/reports/tests/testDevelopDebugUnitTest',
+             reportFiles: 'index.html',
+             reportName: 'Test Results'
+            ])            
+        } catch(ex) {
+            MSG_ERROR = MSG_ERROR + "Publish Test Reports Failed \n"
+        }
+
+        //////
+        try {
+            publishHTML([
+             allowMissing: false,
+             alwaysLinkToLastBuild: true,
+             keepAll: true,
+             reportTitles:'Jacoco',
+             reportDir: 'app/build/reports/jacoco/qualityReport/html',
+             reportFiles: 'index.html',
+             reportName: 'Jacoco report'
+            ])
+        } catch(ex) {
+            MSG_ERROR = MSG_ERROR + "Publish Coverage Report Failed \n"     
+        }
+
+        //////
+        try {
+            publishHTML([
+             allowMissing: false,
+             alwaysLinkToLastBuild: true,
+             keepAll: true,
+             reportTitles:'Jacoco',
+             reportDir: 'quality-check/lint-reports',
+             reportFiles: 'index.html',
+             reportName: 'Lint Report'
+            ])    
+        } catch(ex) {
+            MSG_ERROR = MSG_ERROR + "Publish Lint Report Failed \n"        
+        }
+
+        if ( MSG_ERROR != ""){
+            if ( BRANCH.startsWith("hotfix/")) {
+                sh './gradlew decrementPatchNumber'
+            } else {
+                sh './gradlew decrementMinorNumber'
+            }         
+        }
+
+        sh 'aws s3 cp ./app/version.properties s3://bucket-my-s3-artfacts/'
+
+        if (MSG_ERROR != ""){            
+            slackSend baseUrl: 'https://myteam.slack.com/services/hooks/jenkins-ci/', channel: '#my-channel', color: 'danger', message: "Build fail! \n Tests: ${BUILD_URL}/Test_Results \n Lint: ${BUILD_URL}/Lint_Report \n Results: ${BUILD_URL} \n \n Stages failed:  ${MSG_ERROR}", token: 'mytoken'
+            error "Publish Reports Failed \n"
+        }
+    }
+
+    stage ('Publish Google Play'){
+        try {
+            sh './gradlew publishApkDevelopRelease'
+            sh './gradlew publishApkPreProductionRelease'
+            sh './gradlew publishApkProdRelease'
+            sh './gradlew publishApkProductionRelease'
+        } catch(ex) {
+           MSG_ERROR = MSG_ERROR + " Publish Google Play Failed \n"
+           slackSend baseUrl: 'https://my-team.slack.com/services/hooks/jenkins-ci/', channel: '#my-channel', color: 'danger', message: "Build fail! \n Branch: ${BRANCH} \n Tests: ${BUILD_URL}/Test_Results \n Lint: ${BUILD_URL}/Lint_Report \n Results: ${BUILD_URL} \n Jacoco: ${BUILD_URL}/Jacoco_report", token: 'my-token'
+           error "Publish Google Play failed! \n"
+        }
+    }
+
+    stage('Notifications'){
+        slackSend baseUrl: 'https://my-team.slack.com/services/hooks/jenkins-ci/', channel: '#my-channel', color: 'good', message: "Nova Release \n Branch: ${BRANCH} \n Tests: ${BUILD_URL}/Test_Results \n Lint: ${BUILD_URL}/Lint_Report \n Results: ${BUILD_URL} \n Jacoco: ${BUILD_URL}/Jacoco_report", token: 'my-token'
+    }
+    
+}
