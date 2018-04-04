@@ -1,0 +1,94 @@
+node('xxxxxxx'){
+    //def BRANCH = "${GIT_BRANCH}"
+    //def BRANCH = "refactor/settings-para-build-release"
+    def MSG_ERROR = ""
+    def MSG_SUCCESS = ""
+
+    stage('Checkout'){
+        try{
+            checkout changelog: false, 
+                poll: false, 
+                scm: [
+                    $class: 'GitSCM', 
+                    branches: [[name: "${GIT_BRANCH}" ]],
+                    doGenerateSubmoduleConfigurations: false, 
+                    extensions: [
+                        [$class: 'CheckoutOption', 
+                            timeout: 1200]
+                                ], 
+                    submoduleCfg: [], 
+                    userRemoteConfigs: [
+                              [credentialsId: 'ID-XXXXXXX', 
+                            url: 'git@github.com:MYTEAM/myrepo.git']
+                    ]]
+        }catch(ex){
+            MSG_ERROR = MSG_ERROR + " Checkout "
+        }
+    }
+
+    stage ('Quality Check'){
+
+        //////
+        try {
+            sh './gradlew qualityReport'
+        } catch(ex) {
+             MSG_ERROR = MSG_ERROR + "qualityReport  \n"
+        }
+
+        //////
+        try {
+            publishHTML([
+             allowMissing: false,
+             alwaysLinkToLastBuild: true,
+             keepAll: true,
+             reportTitles:'Jacoco',
+             reportDir: 'app/build/reports/tests/testDevelopDebugUnitTest',
+             reportFiles: 'index.html',
+             reportName: 'Test Results'
+            ])            
+        } catch(ex) {
+            MSG_ERROR = MSG_ERROR + "Publish Test Reports \n"
+        }
+
+        //////
+        try {
+            publishHTML([
+             allowMissing: false,
+             alwaysLinkToLastBuild: true,
+             keepAll: true,
+             reportTitles:'Jacoco',
+             reportDir: 'app/build/reports/jacoco/qualityReport/html',
+             reportFiles: 'index.html',
+             reportName: 'Jacoco report'
+            ])
+        } catch(ex) {
+            MSG_ERROR = MSG_ERROR + "Publish Coverage Report \n"     
+        }
+
+        //////
+        try {
+            publishHTML([
+             allowMissing: false,
+             alwaysLinkToLastBuild: true,
+             keepAll: true,
+             reportTitles:'Jacoco',
+             reportDir: 'quality-check/lint-reports',
+             reportFiles: 'index.html',
+             reportName: 'Lint Report'
+            ])    
+        } catch(ex) {
+            MSG_ERROR = MSG_ERROR + "Publish Lint Report \n"        
+        }
+
+
+        if (MSG_ERROR != ""){            
+            slackSend baseUrl: 'https://MY.slack.com/services/hooks/jenkins-ci/', channel: '#MY-CHANNEL', color: 'danger', message: "Build fail! \n PR: ${ghprbPullLink} \n Tests: ${BUILD_URL}/Test_Results \n Lint: ${BUILD_URL}/Lint_Report \n Results: ${BUILD_URL} \n Jacoco: ${BUILD_URL}/Jacoco_report \n \n Stages failed:  ${MSG_ERROR}", token: 'MYTOKEN'
+            error "Publish Reports Failed \n"
+        }
+    }
+
+    stage('Notifications'){
+        slackSend baseUrl: 'https://MY.slack.com/services/hooks/jenkins-ci/', channel: '#MY-CHANNEL', color: 'good', message: "Build PR to Develop success!  \n PR: ${ghprbPullLink} \n Tests: ${BUILD_URL}/Test_Results \n Lint: ${BUILD_URL}/Lint_Report \n Results: ${BUILD_URL} \n Jacoco: ${BUILD_URL}/Jacoco_report", token: 'MYTOKEN'
+    }
+    
+}
