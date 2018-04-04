@@ -1,0 +1,101 @@
+def CLUSTER = "name-cluster"
+def SERVICE = "name-service"
+def TASK = "name-service-task"
+
+def ECRADDR = "xxxxxxxx.dkr.ecr.sa-east-1.amazonaws.com"
+def ECRREPO = "name-repo-dev"
+
+
+def ENVS = """
+NODE_ENV=xxxx
+#DB_URL=mongodb://127.0.0.1:27017
+DB_URL=xxxxxxx
+DB_NAME=xxxxx
+DB_COLLECTION_NAME=xxxx
+LOGGER_LEVEL=WARN
+PORT=3001
+HTTPS_PORT=3002
+"""
+def TASKDEF = """
+{
+    \\\"containerDefinitions\\\": [
+        {
+            \\\"portMappings\\\": [
+                {
+                    \\\"hostPort\\\": 0,
+                    \\\"protocol\\\": \\\"tcp\\\",
+                    \\\"containerPort\\\": 3001
+                }
+            ],
+            \\\"cpu\\\": 0,
+            \\\"memoryReservation\\\": 512,
+            \\\"image\\\": \\\"$ECRADDR/$ECRREPO:latest\\\",
+            \\\"essential\\\": true,
+            \\\"name\\\": \\\"name-service-dev\\\",
+            \\\"logConfiguration\\\": {
+                \\\"logDriver\\\": \\\"awslogs\\\",
+                \\\"options\\\": {
+                    \\\"awslogs-group\\\": \\\"log-ecs-xxxx\\\",
+                    \\\"awslogs-region\\\": \\\"sa-east-1\\\"
+                }
+            }
+        }
+    ],
+    \\\"family\\\": \\\"name-service\\\",
+    \\\"networkMode\\\": \\\"bridge\\\"
+}
+"""
+
+
+node("xxxxxxx"){
+    
+    withCredentials([usernamePassword(credentialsId: 'access-key', passwordVariable: 'secretkey', usernameVariable: 'accesskey')]) {
+    withEnv(["AWS_ACCESS_KEY_ID=$accesskey", "AWS_SECRET_ACCESS_KEY=$secretkey"]) {
+    
+    stage("checkout") {
+        sh "rm -rf /var/jenkins/app/source/$ECRREPO/"
+        sh "mkdir -p /var/jenkins/app/source/$ECRREPO/"
+        dir("/var/jenkins/app/source/$ECRREPO/") {
+            git credentialsId: 'usergit', url: 'https://github.com/myteam/myrepo.git'
+            
+        }
+    }
+    
+    stage("source-install"){
+        dir("/var/jenkins/app/source/$ECRREPO/") {
+            sh "sudo npm install -g"
+            sh "npm install || exit 0"
+            sh "echo \"$ENVS\" > .env"
+        }
+    }
+    
+    stage ("source-test"){
+        dir("/var/jenkins/app/source/$ECRREPO/") {
+         //   sh "npm run test"
+        }
+    }
+    
+    stage("docker-build") {
+        dir("/var/jenkins/app/source/$ECRREPO/") {
+            sh "docker build -t $ECRREPO:latest ."
+        }
+    }
+    
+    stage("ecr-push") {
+        sh "eval \$(aws ecr get-login --no-include-email --region sa-east-1)"
+        sh "docker tag $ECRREPO:latest $ECRADDR/$ECRREPO:latest"
+        sh "docker push $ECRADDR/$ECRREPO:latest"
+    
+    }
+    
+    stage("ecs-update") {
+         dir("/var/jenkins/app/source/$ECRREPO/") {
+            sh "echo \"$TASKDEF\" > taskdef"
+        }
+        sh "aws ecs register-task-definition --region sa-east-1 --cli-input-json file:////var//jenkins//app//source//$ECRREPO//taskdef"
+        sh "aws ecs update-service --region sa-east-1 --cluster $CLUSTER --task-definition $TASK --service $SERVICE --force-new-deployment"
+    }
+    
+    }
+    }
+}
