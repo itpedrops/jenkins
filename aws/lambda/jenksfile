@@ -1,0 +1,33 @@
+def meuapp = "node-ha"
+
+node("my-node"){
+
+    withCredentials([usernamePassword(credentialsId: "aws-deploy", passwordVariable: "awssecretskey", usernameVariable: "awsaccesskey")]) {
+    withEnv(["AWS_ACCESS_KEY_ID=$my-var-access", "AWS_SECRET_ACCESS_KEY=$my-user-access"]) {  
+
+    stage("Checkout"){
+        
+        sh "rm -rf /var/jenkins/app/source/$meuapp/"   
+        sh "mkdir -p /var/jenkins/app/source/$meuapp/"
+        dir("/var/jenkins/app/source/$meuapp/"){
+            /*sh "echo \"$accesskey $secretkey\" > a"
+        sh "exit 1"*/
+            git branch: 'developer', credentialsId: 'user-git', url: 'git@github.com:pedrops/my-app.git'
+        }
+    }
+    
+    stage("Source-Install"){
+    sh "docker run -v /var/jenkins/app/source/$meuapp/:/app/ -w /app/ node:8.11 npm install"
+    dir("/var/jenkins/app/source/$meuapp/"){
+        sh "sudo chown ec2-user: . -R"
+        }
+    }
+    
+    stage("Deploy"){
+    dir("/var/jenkins/app/source/$meuapp/"){
+        sh 'serverless deploy --stage dev'
+        }
+    }   
+  }
+ }
+}
