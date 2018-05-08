@@ -1,0 +1,38 @@
+def PROJECT = "my-app"
+node("my-node"){
+
+    withCredentials([usernamePassword(credentialsId: 'access-key', passwordVariable: 'secretkey', usernameVariable: 'accesskey')]) {
+    withEnv(["AWS_ACCESS_KEY_ID=$accesskey", "AWS_SECRET_ACCESS_KEY=$secretkey"]) {
+    
+    stage("Checkout"){
+        
+        sh "rm -rf /var/jenkins/app/source/$PROJECT/"   
+        sh "mkdir -p /var/jenkins/app/source/$PROJECT/"
+        dir("/var/jenkins/app/source/$PROJECT/"){
+            git branch: 'develop', credentialsId: 'cicddigital', url: 'git@github.com:pedrops/myrepo.git'
+        }
+    }
+    
+    stage("Source-Install"){
+    sh "docker run -v /var/jenkins/app/source/$PROJECT/:/app/ -w /app/ node:8.11 npm install"
+    dir("/var/jenkins/app/source/$PROJECT/"){
+        sh "sudo chown ec2-user: . -R"
+        }
+    }
+
+    stage("send email"){
+        sh "aws sns publish --topic-arn arn:aws:sns:sa-east-1:xxxxxxxxxx:my-ARN --message 'Olá, Está ocorrendo um deploy do $PROJECT em Produção !!! Acesse o Jenkins para fazer a aprovação do BUILD número -> $BUILD_NUMBER na URL: $BUILD_URL'"
+    }
+
+    stage("Deploy approval"){
+    input "Deploy to Prod?"
+    }   
+
+    stage("Deploy"){
+    dir("/var/jenkins/app/source/$PROJECT/"){
+        sh "serverless deploy --stage dev"
+        }
+    }   
+  }
+ }
+}
